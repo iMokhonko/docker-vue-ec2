@@ -82,6 +82,9 @@ resource "aws_launch_template" "chat_asg_launch_template" {
   iam_instance_profile {
     name = "chat-ec2-instances-profile"
   }
+
+  // should waint untill first image will be pushed to ecr repository
+  depends_on = [ null_resource.build_and_push_docker_image ]
 }
 
 resource "aws_autoscaling_group" "chat_asg" {
@@ -99,9 +102,6 @@ resource "aws_autoscaling_group" "chat_asg" {
     id      = aws_launch_template.chat_asg_launch_template.id
     version = "$Latest"
   }
-
-  // should waint untill first image will be pushed to ecr repository
-  depends_on = [ null_resource.build_and_push_docker_image ]
 }
 
 # Create a new ALB Target Group attachment
