@@ -2,6 +2,7 @@
 resource "aws_lb_target_group" "chat_lb_target_group" {
   name     = "chat-lb-tg"
   port     = 80
+  deregistration_delay = 5
   protocol = "HTTP"
   vpc_id   = aws_vpc.chat_vpc.id
 }

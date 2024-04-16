@@ -84,14 +84,17 @@ resource "aws_launch_template" "chat_asg_launch_template" {
   }
 
   // should waint untill first image will be pushed to ecr repository
-  depends_on = [ null_resource.build_and_push_docker_image ]
+  depends_on = [null_resource.build_and_push_docker_image]
 }
 
 resource "aws_autoscaling_group" "chat_asg" {
 	name = "chat-webui-asg"
-  desired_capacity = 1
-  max_size         = 2
-  min_size         = 1
+  desired_capacity = 2
+  max_size         = 4
+  min_size         = 2
+  default_instance_warmup = 10
+
+  target_group_arns = [aws_lb_target_group.chat_lb_target_group.arn]
 
 	vpc_zone_identifier = [
     aws_subnet.chat_private_subnet_a.id,
@@ -104,8 +107,26 @@ resource "aws_autoscaling_group" "chat_asg" {
   }
 }
 
-# Create a new ALB Target Group attachment
-resource "aws_autoscaling_attachment" "autoscaling_groupz_attachment" {
-  autoscaling_group_name = aws_autoscaling_group.chat_asg.id
-  lb_target_group_arn    = aws_lb_target_group.chat_lb_target_group.arn
+# Create scaling policy
+resource "aws_autoscaling_policy" "bat" {
+  name                   = "CPU_tracking"
+  policy_type            = "TargetTrackingScaling"
+  autoscaling_group_name = aws_autoscaling_group.chat_asg.name
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+
+    target_value = 70.0
+  }
+}
+
+resource "null_resource" "start_instance_refresh" {
+  provisioner "local-exec" {
+    command = "aws autoscaling start-instance-refresh --auto-scaling-group-name ${aws_autoscaling_group.chat_asg.name} --strategy Rolling --preferences '{\"MinHealthyPercentage\": 50, \"InstanceWarmup\": 10}'"
+  }
+  triggers = {
+    always_run = timestamp()
+  }
 }
