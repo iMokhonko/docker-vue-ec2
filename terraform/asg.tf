@@ -72,9 +72,12 @@ resource "aws_iam_instance_profile" "chat_ec2_instances_profile" {
 
 # Create launch template for autoscaling group
 resource "aws_launch_template" "chat_asg_launch_template" {
-	update_default_version = true
+  update_default_version = true
   name_prefix   = "chat-webui-launch-template-"
-  instance_type = "t4g.nano"
+
+  // Primary instance type
+  instance_type = "t4g.micro"
+
   image_id      = "ami-06ea60c08bdaa1f49"
   user_data     = filebase64("./user-data.sh") 
   vpc_security_group_ids  = [aws_security_group.chat_asg_sg.id]
@@ -88,23 +91,52 @@ resource "aws_launch_template" "chat_asg_launch_template" {
 }
 
 resource "aws_autoscaling_group" "chat_asg" {
-	name = "chat-webui-asg"
-  desired_capacity = 2
+  name = "chat-webui-asg"
+  desired_capacity = 3
   max_size         = 4
-  min_size         = 2
-  default_instance_warmup = 10
+  min_size         = 1
+  default_instance_warmup = 15
 
   target_group_arns = [aws_lb_target_group.chat_lb_target_group.arn]
 
-	vpc_zone_identifier = [
+  vpc_zone_identifier = [
     aws_subnet.chat_private_subnet_a.id,
     aws_subnet.chat_private_subnet_b.id
   ]
 
-  launch_template {
-    id      = aws_launch_template.chat_asg_launch_template.id
-    version = "$Latest"
+  mixed_instances_policy {
+    instances_distribution {
+      # number of on-demand instances that will be always launched before spot instances
+      on_demand_base_capacity = 1 
+
+      # percent of on-demand instances that should be launched after on-demand base capacity is reached 
+      # 0 it mens it will always launch spot instancess
+      # 25 it means 25% percent of instances will be on-demand
+      on_demand_percentage_above_base_capacity = 0
+
+      # this one is recomended
+      spot_allocation_strategy = "price-capacity-optimized"
+    }
+
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.chat_asg_launch_template.id
+        version            = "$Latest"
+      }
+
+      override {
+        instance_type = "t4g.micro" #t4g becuase this is cheapes version and support arm64 Docker images
+        weighted_capacity = "1"
+      }
+
+      override {
+        instance_type = "t4g.small" #t4g becuase this is cheapes version and support arm64 Docker images
+        weighted_capacity = "1"
+      }
+    }
   }
+
+  capacity_rebalance = true
 }
 
 # Create scaling policy
@@ -112,6 +144,7 @@ resource "aws_autoscaling_policy" "bat" {
   name                   = "CPU_tracking"
   policy_type            = "TargetTrackingScaling"
   autoscaling_group_name = aws_autoscaling_group.chat_asg.name
+
 
   target_tracking_configuration {
     predefined_metric_specification {
@@ -122,6 +155,9 @@ resource "aws_autoscaling_policy" "bat" {
   }
 }
 
+# Executes instance refresh
+# TODO prevent for first launch
+# TODO move to separate flow as this is not resource "set-up"-based action
 resource "null_resource" "start_instance_refresh" {
   provisioner "local-exec" {
     command = "aws autoscaling start-instance-refresh --auto-scaling-group-name ${aws_autoscaling_group.chat_asg.name} --strategy Rolling --preferences '{\"MinHealthyPercentage\": 50, \"InstanceWarmup\": 10}'"
