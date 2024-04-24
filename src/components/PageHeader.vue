@@ -1,6 +1,6 @@
 <template>
   <header class="header">
-    <h1>Messenger</h1>
+    <h2>Messenger</h2>
 
     <button>Profile</button>
   </header>
@@ -17,7 +17,7 @@
   justify-content: space-between;
   width: 100%;
 
-  h1 {
+  h2 {
     margin: 0;
     padding: 0;
     color: #fff;
