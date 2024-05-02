@@ -70,6 +70,8 @@ import PageHeader from '@/components/PageHeader';
 import ChatItem from '@/components/ChatItem';
 import MessageItem from '@/components/MessageItem';
 
+import io from 'socket.io-client'
+
 export default defineComponent({
   components: {
     PageHeader,
@@ -78,6 +80,16 @@ export default defineComponent({
   },
 
   setup() {
+    const connectUrl = new URL(window.location).searchParams.get('c');
+
+    const socket = io(connectUrl, { withCredentials: true });
+
+    socket.on('connect', () => console.log(`connected to -> ${connectUrl}`));
+    socket.on("disconnect", (reason, details) => console.log(`disconnected from -> ${connectUrl}`, reason, details));
+
+    window.socket = socket;
+
+
     const activeChannel = ref(null);
     const channels = ref([
       {
