@@ -20,11 +20,12 @@
 
       <div class="page__channels-inner">
         <ChatItem
-          v-for="(channel, index) in channels"
+          v-for="(channel, index) in sortedChannels"
           :key="index"
           :name="channel.name"
           :is-active="activeChannel === channel.id"
           :unread-messages-count="channel.unreadMessagesCount"
+          :is-own-message="channel.isOwnMessage"
           :last-message-text="channel.lastMessageText"
           :last-message-time="channel.lastMessageTime"
           :is-online="channel.isOnline"
@@ -41,13 +42,13 @@
       </div>
 
       <div class="page__channel-inner">
-        <div class="messages-container">
+        <div class="messages-container" v-if="activeChannel">
           <MessageItem
-            v-for="(message, index) in messages"
+            v-for="(message, index) in chatMessages[activeChannel]"
             :key="index"
-            :name="message.name"
-            :message-text="message.messageText"
-            :message-time="message.messageTime"
+            :name="message.from"
+            :message-text="message.text"
+            :message-time="message.time"
           />
         </div>
 
@@ -64,13 +65,15 @@
 
 <script>
 // import { io } from "socket.io-client";
-import { defineComponent, ref } from "vue";
+import { computed, defineComponent, ref, watch } from "vue";
 
 import PageHeader from '@/components/PageHeader';
 import ChatItem from '@/components/ChatItem';
 import MessageItem from '@/components/MessageItem';
 
-import io from 'socket.io-client'
+import io from 'socket.io-client';
+
+const emitAsync = (socket, name, payload) => new Promise(resolve => socket.emit(name, payload, resolve));
 
 export default defineComponent({
   components: {
@@ -81,152 +84,105 @@ export default defineComponent({
 
   setup() {
     const connectUrl = new URL(window.location).searchParams.get('c');
+    const userId =  new URL(window.location).searchParams.get('userId');
 
-    const socket = io(connectUrl, { withCredentials: true });
+    const chatMessages = ref({});
+
+    const socket = io(connectUrl, { 
+      withCredentials: true,
+      auth: { userId }
+    });
 
     socket.on('connect', () => console.log(`connected to -> ${connectUrl}`));
     socket.on("disconnect", (reason, details) => console.log(`disconnected from -> ${connectUrl}`, reason, details));
 
-    window.socket = socket;
+    const upsertChat = (payload) => {
+      const channelIndex = channels.value.findIndex(({ id }) => id === payload.conversationId);
 
+      if(!chatMessages.value[payload.conversationId]) {
+        chatMessages.value[payload.conversationId] = [];
+      }
+
+      chatMessages.value[payload.conversationId].push({
+        from: payload.messageData.from,
+        text: payload.messageData.messageText,
+        time: payload.messageData.messageTime
+      });
+
+      if(channelIndex !== -1) {
+        channels.value[channelIndex].isOwnMessage = payload.messageData.from === userId;
+        channels.value[channelIndex].lastMessageText = payload.messageData.messageText;
+        channels.value[channelIndex].lastMessageTime = payload.messageData.messageTime;
+      } else {
+        channels.value.push({
+          id: payload.conversationId,
+          name: payload.to,
+          unreadMessagesCount: 0,
+          isOnline: false,
+          isOwnMessage: payload.messageData.from === userId,
+          lastMessageText: payload.messageData.messageText,
+          lastMessageTime: payload.messageData.messageTime
+        })
+      }
+    }
+
+    window.sendMessageTo = async (to, text) => {
+      const result = await emitAsync(
+        socket,
+        'post-message-to-user',
+        { to, text }
+      );
+
+      upsertChat(result);
+      
+      return result;
+    };
+
+    const openConversation = async (conversationId, { date = Date.now(), paginationToken = null } = {}) => {
+      const { result } = await emitAsync(
+        socket,
+        'get-conversation-messages',
+        { conversationId, date, paginationToken }
+      );
+
+
+      if(chatMessages.value[conversationId]) {
+        chatMessages.value[conversationId] = [
+          ...result,
+          ...chatMessages.value[conversationId].reverse(),
+        ]
+      } else {
+        chatMessages.value[conversationId] = [...result].reverse();
+      }
+    };
+
+    window.openConversation = openConversation;
+   
+
+    socket.on('incoming-message', upsertChat);
+    socket.on('update-user-chats', 
+      (payload) => channels.value = payload.map(({ conversationId, to, lastMessageData }) => ({
+        id: conversationId,
+        name: to,
+        unreadMessagesCount: 0,
+        isOnline: false,
+        lastMessageText: lastMessageData.messageText,
+        lastMessageTime: lastMessageData.messageTime
+      }))
+    );
 
     const activeChannel = ref(null);
-    const channels = ref([
-      {
-        id: '1',
-        name: 'Ivan Mokhonko',
-        unreadMessagesCount: 1,
-        isOnline: true,
-        lastMessageText: 'Pellentesque libero tortor tincidunt et',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '2',
-        name: 'Vasya Pupkin',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Maecenas ullamcorper dui et placerat',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '3',
-        name: 'Jeff Bezos',
-        unreadMessagesCount: 5,
-        lastMessageText: 'Phasellus gravida semper nisi. Vestibulum eu odio. Phasellus ullamcorper ipsum rutrum nunc. Suspendisse potenti. Aenean tellus metus, bibendum sed, posuere ac, mattis non, nunc.',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '4',
-        name: 'Mark Whalberg',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Nullam vel sem. Donec mollis hendrerit risus. Phasellus tempus. Curabitur a felis in nunc fringilla tristique. Nam pretium turpis et arcu.',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '34234',
-        name: 'Tom Cruz',
-        isOnline: true,
-        unreadMessagesCount: 0,
-        lastMessageText: 'Nullam vel sem. Donec mollis hendrerit risus. Phasellus tempus. Curabitur a felis in nunc fringilla tristique. Nam pretium turpis et arcu.',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '5',
-        name: 'Ivan Mokhonko',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Pellentesque libero tortor tincidunt et',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '6',
-        name: 'Vasya Pupkin',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Maecenas ullamcorper dui et placerat',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '7',
-        name: 'Jeff Bezos',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Phasellus gravida semper nisi. Vestibulum eu odio. Phasellus ullamcorper ipsum rutrum nunc. Suspendisse potenti. Aenean tellus metus, bibendum sed, posuere ac, mattis non, nunc.',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '8',
-        name: 'Mark Whalberg',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Nullam vel sem. Donec mollis hendrerit risus. Phasellus tempus. Curabitur a felis in nunc fringilla tristique. Nam pretium turpis et arcu.',
-        lastMessageTime: Date.now()
-      },
-      {
-        id: '4',
-        name: 'Tom Cruz',
-        unreadMessagesCount: 0,
-        lastMessageText: 'Nullam vel sem. Donec mollis hendrerit risus. Phasellus tempus. Curabitur a felis in nunc fringilla tristique. Nam pretium turpis et arcu.',
-        lastMessageTime: Date.now()
-      }
-    ]);
+    const channels = ref([]);
 
-    const messages = [
-      {
-        id: '1',
-        name: 'Ivan Mokhonko',
-        messageText: `Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed in libero ut nibh placerat accumsan. Nullam sagittis. Praesent nec nisl a purus blandit viverra. Aliquam lobortis.
+    const sortedChannels = computed(() => [...channels.value].sort((a, b) => b.lastMessageTime - a.lastMessageTime))
 
-Mauris sollicitudin fermentum libero. Donec elit libero, sodales nec, volutpat a, suscipit non, turpis. Maecenas vestibulum mollis diam. Nam at tortor in tellus interdum sagittis. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed aliquam, nisi quis porttitor congue, elit erat euismod orci, ac placerat dolor lectus quis orci.
-
-Curabitur turpis. Aenean ut eros et nisl sagittis vestibulum. Aenean tellus metus, bibendum sed, posuere ac, mattis non, nunc. Sed magna purus, fermentum eu, tincidunt eu, varius ut, felis. Nunc egestas, augue at pellentesque laoreet, felis eros vehicula leo, at malesuada velit leo quis pede.
-
-Praesent egestas tristique nibh. Praesent ut ligula non mi varius sagittis. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed lectus. Aliquam erat volutpat.`,
-        messageTime: Date.now()
-      },
-      {
-        id: '2',
-        name: 'Ivan Mokhonko',
-        messageText: 'Nam pretium turpis et arcu. Sed mollis, eros et ultrices tempus, mauris ipsum aliquam libero, non adipiscing dolor urna a orci. Vivamus quis mi. Nulla facilisi. Nunc sed turpis.',
-        messageTime: Date.now()
-      },
-      {
-        id: '3',
-        name: 'Ivan Mokhonko',
-        messageText: `Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed in libero ut nibh placerat accumsan. Nullam sagittis. Praesent nec nisl a purus blandit viverra. Aliquam lobortis.
-
-Mauris sollicitudin fermentum libero. Donec elit libero, sodales nec, volutpat a, suscipit non, turpis. Maecenas vestibulum mollis diam. Nam at tortor in tellus interdum sagittis. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed aliquam, nisi quis porttitor congue, elit erat euismod orci, ac placerat dolor lectus quis orci.
-
-Curabitur turpis. Aenean ut eros et nisl sagittis vestibulum. Aenean tellus metus, bibendum sed, posuere ac, mattis non, nunc. Sed magna purus, fermentum eu, tincidunt eu, varius ut, felis. Nunc egestas, augue at pellentesque laoreet, felis eros vehicula leo, at malesuada velit leo quis pede.
-
-Praesent egestas tristique nibh. Praesent ut ligula non mi varius sagittis. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed lectus. Aliquam erat volutpat.`,
-        messageTime: Date.now()
-      },
-      {
-        id: '4',
-        name: 'Ivan Mokhonko',
-        messageText: 'Nam pretium turpis et arcu. Sed mollis, eros et ultrices tempus, mauris ipsum aliquam libero, non adipiscing dolor urna a orci. Vivamus quis mi. Nulla facilisi. Nunc sed turpis.',
-        messageTime: Date.now()
-      },
-      {
-        id: '5',
-        name: 'Ivan Mokhonko',
-        messageText: 'Nam pretium turpis et arcu. Sed mollis, eros et ultrices tempus, mauris ipsum aliquam libero, non adipiscing dolor urna a orci. Vivamus quis mi. Nulla facilisi. Nunc sed turpis.',
-        messageTime: Date.now()
-      },
-      {
-        id: '6',
-        name: 'Ivan Mokhonko',
-        messageText: `Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed in libero ut nibh placerat accumsan. Nullam sagittis. Praesent nec nisl a purus blandit viverra. Aliquam lobortis.
-
-Mauris sollicitudin fermentum libero. Donec elit libero, sodales nec, volutpat a, suscipit non, turpis. Maecenas vestibulum mollis diam. Nam at tortor in tellus interdum sagittis. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed aliquam, nisi quis porttitor congue, elit erat euismod orci, ac placerat dolor lectus quis orci.
-
-Curabitur turpis. Aenean ut eros et nisl sagittis vestibulum. Aenean tellus metus, bibendum sed, posuere ac, mattis non, nunc. Sed magna purus, fermentum eu, tincidunt eu, varius ut, felis. Nunc egestas, augue at pellentesque laoreet, felis eros vehicula leo, at malesuada velit leo quis pede.
-
-Praesent egestas tristique nibh. Praesent ut ligula non mi varius sagittis. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed lectus. Aliquam erat volutpat.`,
-        messageTime: Date.now()
-      }
-    ];
+    watch(activeChannel, (channelId) => openConversation(channelId));
 
     return {
-      channels,
-      activeChannel,
-      messages
+      chatMessages,
+
+      sortedChannels,
+      activeChannel
     }
   }
 })
@@ -371,6 +327,7 @@ html, body {
   display: flex;
   column-gap: 16px;
   padding-top: 0;
+  margin-top: auto;
 
   textarea {
     flex-grow: 1;
@@ -394,6 +351,10 @@ html, body {
 
   .message {
     max-width: calc(100% - 16px);
+
+    &:first-child {
+      margin-top: auto;
+    }
   }
 }
 

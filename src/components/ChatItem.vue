@@ -4,7 +4,7 @@
 		:class="{ 'active': isActive }"
 	>
 		<div class="chat-item__avatar">
-			IM
+			{{  chatAvatarChars  }}
 		</div>
 
 		<div class="chat-item__content">
@@ -13,7 +13,7 @@
 			</div>
 
 			<div v-if="lastMessageText" class="chat-item__message-text">
-				{{ lastMessageText }}
+				{{ isOwnMessage ? 'You: ' : '' }}{{ lastMessageText }}
 			</div>
 		</div>
 
@@ -44,6 +44,11 @@ export default defineComponent({
 			default: 0
 		},
 
+		isOwnMessage: {
+			type: Boolean,
+			default: false
+		},
+
 		lastMessageText: {
 			type: String,
 			default: ''
@@ -68,6 +73,12 @@ export default defineComponent({
 			const minutes = "0" + date.getMinutes();
 
 			return hours + ':' + minutes.substr(-2);
+		},
+
+		chatAvatarChars() {
+			const words = this.name.split('.');
+
+			return words.map(word => word[0].toUpperCase()).join('');
 		}
 	}
 })
