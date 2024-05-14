@@ -3,7 +3,10 @@
 		class="chat-item"
 		:class="{ 'active': isActive }"
 	>
-		<div class="chat-item__avatar">
+		<div 
+			class="chat-item__avatar"
+			:style="{ backgroundColor: `${avatarBgColor}` }"
+		>
 			{{  chatAvatarChars  }}
 		</div>
 
@@ -26,6 +29,8 @@
 
 <script>
 import { defineComponent } from 'vue';
+
+import generageColorBasedOnChars from '@/helpers/generate-color-based-on-chars';
 
 export default defineComponent({
 	props: {
@@ -79,7 +84,12 @@ export default defineComponent({
 			const words = this.name.split('.');
 
 			return words.map(word => word[0].toUpperCase()).join('');
-		}
+		},
+
+		avatarBgColor() {
+      return generageColorBasedOnChars(this.name);
+    },
+		
 	}
 })
 </script>
@@ -102,7 +112,6 @@ export default defineComponent({
 	&__avatar {
 		width: 48px;
 		height: 48px;
-		background: #4ADBC8;
 		border-radius: 50%;
 		display: flex;
 		align-items: center;
@@ -110,6 +119,7 @@ export default defineComponent({
 		font-weight: bold;
 		font-size: 12px;
 		flex-shrink: 0;
+		color: #fff;
 	}
 
 	&__content {

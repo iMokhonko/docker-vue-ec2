@@ -1,6 +1,11 @@
 <template>
 	<div class="message">
-		<div class="avatar">IM</div>
+		<div 
+      class="avatar"
+      :style="{ backgroundColor: `${avatarBgColor}` }"
+    >
+      {{ chatAvatarChars }}
+    </div>
 		<div class="message__content">
 			<div class="name">{{ name }} <span class="time">{{  time  }}</span></div>
 			<div class="message-text">
@@ -13,7 +18,11 @@
 <script>
 import { defineComponent } from 'vue';
 
+import generageColorBasedOnChars from '@/helpers/generate-color-based-on-chars';
+
 export default defineComponent({
+  emits: ['hook:mounted'],
+  
 	props: {
 		name: {
 			type: String,
@@ -31,7 +40,21 @@ export default defineComponent({
 		}
 	},
 
+  mounted() {
+    this.$emit('hook:mounted')
+  },
+
 	computed: {
+    avatarBgColor() {
+      return generageColorBasedOnChars(this.name);
+    },
+
+    chatAvatarChars() {
+			const words = this.name.split('.');
+
+			return words.map(word => word[0].toUpperCase()).join('');
+		},
+
 		time() {
 			const date = new Date(this.messageTime);
 
@@ -45,7 +68,6 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-
 .message {
   display: flex;
   column-gap: 8px;
@@ -81,13 +103,13 @@ export default defineComponent({
 .avatar {
   width: 32px;
   height: 32px;
-  background: #4ADBC8;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
   font-size: 12px;
+  color: #fff;
 }
 
 .name {

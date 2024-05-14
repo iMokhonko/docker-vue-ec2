@@ -11,10 +11,10 @@
       <div class="page__channels-header">
         <div class="page__channels-header-title">
           <h2>Channels</h2>
-          <button class="create-channel-button">+</button>
+          <!--<button class="create-channel-button">+</button>-->
         </div>
         <input
-          placeholder="Search people or channels"
+          placeholder="Search people"
         >
       </div>
 
@@ -35,32 +35,51 @@
     </div>
 
     <div class="page__channel">
-      <div class="page__channel-header">
-        <div class="avatar">IM</div>
-        <div class="name">Ivan Mokhonko</div>
+      <div v-if="activeChannel" class="page__channel-header">
+        <div class="avatar" :style="{ backgroundColor: getAvatarColor(currentChatUser.name) }">{{ getAvatarChars(currentChatUser.name) }}</div>
+        <div class="name">{{ currentChatUser.name  }}</div>
         <div class="status online">online</div>
       </div>
 
       <div class="page__channel-inner">
-        <div class="messages-container" v-if="activeChannel">
+        <button 
+          v-if="chatMessages?.[activeChannel]?.bucketKey"
+          @click="() => loadConversationPreviousMessages(activeChannel)"
+        >
+          Load previous messages
+        </button>
+
+        <div 
+          v-if="activeChannel"
+          ref="messagesContainer"
+          class="messages-container"
+        >
           <MessageItem
-            v-for="(message, index) in chatMessages[activeChannel]"
+            v-for="(message, index) in (chatMessages?.[activeChannel]?.messages ?? [])"
             :key="index"
             :name="message.from"
             :message-text="message.text"
             :message-time="message.time"
+            @hook:mounted="handleMessageMount"
           />
         </div>
 
-        <div class="input-container">
-          <textarea rows="1" placeholder="Write a message..."></textarea>
-          <button>send</button>
+        <div 
+          v-if="activeChannel"
+          class="input-container"
+        >
+          <input 
+            v-model="message" 
+            placeholder="Write a message..."
+            @keyup.enter="() => sendMessageTo(activeChannel)"
+          >
+          <button @click="() => sendMessageTo(activeChannel)">
+            send
+          </button>
         </div>
       </div>
     </div>
   </div>  
-
-  <!-- <router-view/> -->
 </template>
 
 <script>
@@ -72,6 +91,8 @@ import ChatItem from '@/components/ChatItem';
 import MessageItem from '@/components/MessageItem';
 
 import io from 'socket.io-client';
+
+import generageColorBasedOnChars from '@/helpers/generate-color-based-on-chars';
 
 const emitAsync = (socket, name, payload) => new Promise(resolve => socket.emit(name, payload, resolve));
 
@@ -86,7 +107,9 @@ export default defineComponent({
     const connectUrl = new URL(window.location).searchParams.get('c');
     const userId =  new URL(window.location).searchParams.get('userId');
 
+    const message = ref('');
     const chatMessages = ref({});
+    const messagesContainer = ref(null);
 
     const socket = io(connectUrl, { 
       withCredentials: true,
@@ -100,10 +123,14 @@ export default defineComponent({
       const channelIndex = channels.value.findIndex(({ id }) => id === payload.conversationId);
 
       if(!chatMessages.value[payload.conversationId]) {
-        chatMessages.value[payload.conversationId] = [];
+        chatMessages.value[payload.conversationId] = {
+          messages: [],
+          bucketKey: null,
+          paginationToken: null
+        };
       }
 
-      chatMessages.value[payload.conversationId].push({
+      chatMessages.value[payload.conversationId].messages.push({
         from: payload.messageData.from,
         text: payload.messageData.messageText,
         time: payload.messageData.messageTime
@@ -126,38 +153,66 @@ export default defineComponent({
       }
     }
 
-    window.sendMessageTo = async (to, text) => {
+    const sendMessageTo = async (to) => {
+      const normalizedMessage = message.value.trim();
+
+      if(!normalizedMessage.length) return;
+
+      message.value = '';
+
       const result = await emitAsync(
         socket,
         'post-message-to-user',
-        { to, text }
+        { 
+          to: to.replace(userId, '').replace(':', ''),
+          text: normalizedMessage
+        }
       );
+      
 
       upsertChat(result);
       
       return result;
     };
 
-    const openConversation = async (conversationId, { date = Date.now(), paginationToken = null } = {}) => {
-      const { result } = await emitAsync(
+    const handleMessageMount = () => messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+
+    const loadConversationMessages = async (conversationId, { bucketKey = Date.now(), paginationToken = null, limit = 50 } = {}) => {
+      const { 
+        messages,
+        paginationToken: nextPaginationToken,
+        bucketKey: nextBucketKey
+      } = await emitAsync(
         socket,
         'get-conversation-messages',
-        { conversationId, date, paginationToken }
+        { conversationId, bucketKey, paginationToken, limit }
       );
 
-
       if(chatMessages.value[conversationId]) {
-        chatMessages.value[conversationId] = [
-          ...result,
-          ...chatMessages.value[conversationId].reverse(),
+        chatMessages.value[conversationId].bucketKey = nextBucketKey;
+        chatMessages.value[conversationId].paginationToken = nextPaginationToken;
+        chatMessages.value[conversationId].messages = [
+          ...messages.reverse(),
+          ...chatMessages.value[conversationId].messages,
         ]
       } else {
-        chatMessages.value[conversationId] = [...result].reverse();
+        chatMessages.value[conversationId] = {
+          messages: [...messages].reverse(),
+          bucketKey: nextBucketKey,
+          paginationToken: nextPaginationToken
+        }
       }
     };
 
-    window.openConversation = openConversation;
-   
+    const loadConversationPreviousMessages = async (conversationId) => {
+      await loadConversationMessages(
+        conversationId,
+        {
+          bucketKey: chatMessages.value[conversationId].bucketKey,
+          paginationToken: chatMessages.value[conversationId].paginationToken
+        }
+      );
+    };
 
     socket.on('incoming-message', upsertChat);
     socket.on('update-user-chats', 
@@ -176,13 +231,39 @@ export default defineComponent({
 
     const sortedChannels = computed(() => [...channels.value].sort((a, b) => b.lastMessageTime - a.lastMessageTime))
 
-    watch(activeChannel, (channelId) => openConversation(channelId));
+    const currentChatUser = computed(() => {
+      const userData = sortedChannels.value.find(({ id }) => id === activeChannel.value);
+
+      return userData ?? null;
+    });
+
+    const getAvatarChars = (name) => {
+			const words = name.split('.');
+
+			return words.map(word => word[0].toUpperCase()).join('');
+		};
+
+    const getAvatarColor = (name) =>  generageColorBasedOnChars(name);
+
+    watch(activeChannel, (conversationId) => loadConversationMessages(conversationId));
+    
 
     return {
+      message,
       chatMessages,
+      messagesContainer,
 
       sortedChannels,
-      activeChannel
+      activeChannel,
+      currentChatUser,
+
+      loadConversationMessages,
+      loadConversationPreviousMessages,
+      handleMessageMount,
+      sendMessageTo,
+
+      getAvatarChars,
+      getAvatarColor
     }
   }
 })
@@ -300,13 +381,13 @@ html, body {
 .avatar {
   width: 32px;
   height: 32px;
-  background: #4ADBC8;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
   font-size: 12px;
+  color: #fff;
 }
 
 .name {
@@ -329,7 +410,7 @@ html, body {
   padding-top: 0;
   margin-top: auto;
 
-  textarea {
+  input {
     flex-grow: 1;
     padding: 8px;
     resize: vertical;
