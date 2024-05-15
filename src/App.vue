@@ -1,21 +1,14 @@
 <template>
-  <!-- <nav>
-    <router-link to="/">Home v5</router-link> |
-    <router-link to="/about">About v5</router-link>
-  </nav> -->
+  <PageHeader v-if="isLoggedIn" />
 
-  <PageHeader />
-
-  <div class="page">
+  <div v-if="isLoggedIn" class="page">
     <div class="page__channels">
       <div class="page__channels-header">
         <div class="page__channels-header-title">
           <h2>Channels</h2>
           <!--<button class="create-channel-button">+</button>-->
         </div>
-        <input
-          placeholder="Search people"
-        >
+        <input placeholder="Search people">
       </div>
 
       <div class="page__channels-inner">
@@ -38,7 +31,9 @@
       <div v-if="activeChannel" class="page__channel-header">
         <div class="avatar" :style="{ backgroundColor: getAvatarColor(currentChatUser.name) }">{{ getAvatarChars(currentChatUser.name) }}</div>
         <div class="name">{{ currentChatUser.name  }}</div>
-        <div class="status online">online</div>
+        <div v-if="currentChatUser.isOnline" class="status online">online</div>
+        <div v-else-if="currentChatUser.lastSeen" class="status">last seen on {{ new Date(currentChatUser.lastSeen).toLocaleDateString() }} {{ new Date(currentChatUser.lastSeen).toLocaleTimeString()  }}</div>
+        <div v-else class="status">offline</div>
       </div>
 
       <div class="page__channel-inner">
@@ -79,7 +74,14 @@
         </div>
       </div>
     </div>
-  </div>  
+  </div>
+
+  <div v-else class="login-page">
+    <h2>Enter your login</h2>
+    <input v-model="login">
+    <span class="caption">Min 3 chars: [a-z0-9_.]</span>
+    <button @click="logIn">Log in</button>
+  </div>
 </template>
 
 <script>
@@ -104,20 +106,14 @@ export default defineComponent({
   },
 
   setup() {
-    const connectUrl = new URL(window.location).searchParams.get('c');
-    const userId =  new URL(window.location).searchParams.get('userId');
+    const login = ref('');
+    const isLoggedIn = ref(false);
+
+    const socket = ref(null);
 
     const message = ref('');
     const chatMessages = ref({});
     const messagesContainer = ref(null);
-
-    const socket = io(connectUrl, { 
-      withCredentials: true,
-      auth: { userId }
-    });
-
-    socket.on('connect', () => console.log(`connected to -> ${connectUrl}`));
-    socket.on("disconnect", (reason, details) => console.log(`disconnected from -> ${connectUrl}`, reason, details));
 
     const upsertChat = (payload) => {
       const channelIndex = channels.value.findIndex(({ id }) => id === payload.conversationId);
@@ -137,7 +133,7 @@ export default defineComponent({
       });
 
       if(channelIndex !== -1) {
-        channels.value[channelIndex].isOwnMessage = payload.messageData.from === userId;
+        channels.value[channelIndex].isOwnMessage = payload.messageData.from === login.value;
         channels.value[channelIndex].lastMessageText = payload.messageData.messageText;
         channels.value[channelIndex].lastMessageTime = payload.messageData.messageTime;
       } else {
@@ -146,7 +142,7 @@ export default defineComponent({
           name: payload.to,
           unreadMessagesCount: 0,
           isOnline: false,
-          isOwnMessage: payload.messageData.from === userId,
+          isOwnMessage: payload.messageData.from === login.value,
           lastMessageText: payload.messageData.messageText,
           lastMessageTime: payload.messageData.messageTime
         })
@@ -161,10 +157,10 @@ export default defineComponent({
       message.value = '';
 
       const result = await emitAsync(
-        socket,
+        socket.value,
         'post-message-to-user',
         { 
-          to: to.replace(userId, '').replace(':', ''),
+          to: to.replace(login.value, '').replace(':', ''),
           text: normalizedMessage
         }
       );
@@ -183,7 +179,7 @@ export default defineComponent({
         paginationToken: nextPaginationToken,
         bucketKey: nextBucketKey
       } = await emitAsync(
-        socket,
+        socket.value,
         'get-conversation-messages',
         { conversationId, bucketKey, paginationToken, limit }
       );
@@ -214,18 +210,6 @@ export default defineComponent({
       );
     };
 
-    socket.on('incoming-message', upsertChat);
-    socket.on('update-user-chats', 
-      (payload) => channels.value = payload.map(({ conversationId, to, lastMessageData }) => ({
-        id: conversationId,
-        name: to,
-        unreadMessagesCount: 0,
-        isOnline: false,
-        lastMessageText: lastMessageData.messageText,
-        lastMessageTime: lastMessageData.messageTime
-      }))
-    );
-
     const activeChannel = ref(null);
     const channels = ref([]);
 
@@ -246,9 +230,62 @@ export default defineComponent({
     const getAvatarColor = (name) =>  generageColorBasedOnChars(name);
 
     watch(activeChannel, (conversationId) => loadConversationMessages(conversationId));
+
+    const logIn = async () => {
+      const connectUrl = new URL(window.location).searchParams.get('c');
+      
+      const normalizedLogin = login.value.trim();
+
+      if(normalizedLogin.length < 3) {
+        alert('Login should be at least 3 characters');
+        return;
+      }
+
+      if(!/^[a-z0-9_.]+$/.test(normalizedLogin)) {
+        alert('Invalid login format');
+        return;
+      }
+
+      socket.value = io(connectUrl, { 
+        withCredentials: true,
+        auth: { userId: login.value }
+      });
+
     
+      socket.value.on('connect', () => {
+        isLoggedIn.value = true;
+        console.log(`connected to -> ${connectUrl}`)
+      });
+      socket.value.on("disconnect", (reason, details) => console.log(`disconnected from -> ${connectUrl}`, reason, details));
+
+      socket.value.on('status', ({ userId, isOnline, lastSeen = 0 }) => {
+        const index = channels.value.findIndex(({ name }) => name === userId);
+
+        if(index !== -1) {
+          channels.value[index].isOnline = isOnline;
+          channels.value[index].lastSeen = lastSeen;
+        }
+      });
+
+      socket.value.on('incoming-message', upsertChat);
+      socket.value.on('update-user-chats', 
+        (payload) => channels.value = payload.map(({ conversationId, to, lastMessageData, isOnline, lastSeen }) => ({
+          id: conversationId,
+          name: to,
+          unreadMessagesCount: 0,
+          isOnline,
+          lastSeen,
+          lastMessageText: lastMessageData.messageText,
+          lastMessageTime: lastMessageData.messageTime
+        }))
+      );
+    };
 
     return {
+      login,
+      isLoggedIn,
+      logIn,
+
       message,
       chatMessages,
       messagesContainer,
@@ -295,6 +332,30 @@ html, body {
   max-height: 100%;
   max-width: 100%;
   overflow: hidden;
+}
+
+.login-page {
+  width: 200px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  row-gap: 16px;
+
+  input {
+    width: 100%;
+  }
+
+  button {
+    width: fit-content;
+  }
+
+  .caption {
+    font-size: 12px;
+    opacity: 0.7;
+  }
 }
 
 .page {
