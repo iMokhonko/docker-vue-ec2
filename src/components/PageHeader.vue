@@ -2,7 +2,7 @@
   <header class="header">
     <h2>Messenger</h2>
 
-    <button>Profile</button>
+    <!-- <button>Profile</button> -->
   </header>
 </template>
 

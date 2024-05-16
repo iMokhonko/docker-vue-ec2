@@ -5,13 +5,27 @@
     <div class="page__channels">
       <div class="page__channels-header">
         <div class="page__channels-header-title">
-          <h2>Channels</h2>
+          <h2>{{ normalizedSearchString ? 'Results' : 'Channels'  }}</h2>
           <!--<button class="create-channel-button">+</button>-->
         </div>
-        <input placeholder="Search people">
+        <input v-model="search" placeholder="Search people">
       </div>
 
-      <div class="page__channels-inner">
+      <div v-if="normalizedSearchString">
+        <div class="no-results" v-if="!searchResults.length">
+          No results {{ normalizedSearchString.length < 3 ? '(enter at least 3 chars)' : ''  }}
+        </div>
+
+        <SearchResult
+          v-for="(searchResult, index) in searchResults"
+          :key="index"
+          :name="searchResult.userId  + (login === searchResult.userId ? ' (You)' : '')"
+          @click="() => addConversation(searchResult)"
+        />
+      </div>
+
+
+      <div v-else class="page__channels-inner">
         <ChatItem
           v-for="(channel, index) in sortedChannels"
           :key="index"
@@ -91,6 +105,7 @@ import { computed, defineComponent, ref, watch } from "vue";
 import PageHeader from '@/components/PageHeader';
 import ChatItem from '@/components/ChatItem';
 import MessageItem from '@/components/MessageItem';
+import SearchResult from '@/components/SearchResult.vue'
 
 import io from 'socket.io-client';
 
@@ -102,7 +117,8 @@ export default defineComponent({
   components: {
     PageHeader,
     ChatItem,
-    MessageItem
+    MessageItem,
+    SearchResult
   },
 
   setup() {
@@ -173,7 +189,7 @@ export default defineComponent({
 
     const handleMessageMount = () => messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
 
-    const loadConversationMessages = async (conversationId, { bucketKey = Date.now(), paginationToken = null, limit = 50 } = {}) => {
+    const loadConversationMessages = async (conversationId, { bucketKey = Date.now(), paginationToken = null, limit = 50, isInit = false } = {}) => {
       const { 
         messages,
         paginationToken: nextPaginationToken,
@@ -187,10 +203,15 @@ export default defineComponent({
       if(chatMessages.value[conversationId]) {
         chatMessages.value[conversationId].bucketKey = nextBucketKey;
         chatMessages.value[conversationId].paginationToken = nextPaginationToken;
-        chatMessages.value[conversationId].messages = [
-          ...messages.reverse(),
-          ...chatMessages.value[conversationId].messages,
-        ]
+
+        if(isInit) {
+          chatMessages.value[conversationId].messages = messages.reverse();
+        } else {
+          chatMessages.value[conversationId].messages = [
+            ...messages.reverse(),
+            ...chatMessages.value[conversationId].messages,
+          ]
+        }
       } else {
         chatMessages.value[conversationId] = {
           messages: [...messages].reverse(),
@@ -229,7 +250,7 @@ export default defineComponent({
 
     const getAvatarColor = (name) =>  generageColorBasedOnChars(name);
 
-    watch(activeChannel, (conversationId) => loadConversationMessages(conversationId));
+    watch(activeChannel, (conversationId) => loadConversationMessages(conversationId, { isInit: true }));
 
     const logIn = async () => {
       const connectUrl = new URL(window.location).searchParams.get('c');
@@ -281,6 +302,48 @@ export default defineComponent({
       );
     };
 
+    const search = ref('');
+    const searchResults = ref([]);
+
+    const normalizedSearchString = computed(() => search.value.trim());
+
+    watch(search, async nv => {
+      const normalizedSearchString = nv.trim();
+
+      if(normalizedSearchString.length < 3) {
+        searchResults.value = [];
+        return;
+      }
+
+      const { results } = await emitAsync(
+        socket.value,
+        'search-users',
+        { search: normalizedSearchString }
+      );
+
+      searchResults.value = results;
+    });
+
+    const addConversation = ({ userId, conversationId, isOnline, lastSeen } = {}) => {
+      const hasConversation = sortedChannels.value.findIndex(({ id }) => id === conversationId);
+
+      if(hasConversation === -1) {
+        channels.value.push({
+          id: conversationId,
+          name: userId,
+          isOnline,
+          lastSeen,
+          lastMessageText: '',
+          lastMessageTime: null,
+          unreadMessagesCount: 0
+        })
+      }
+
+      search.value = '';
+      searchResults.value = [];
+      activeChannel.value = conversationId;
+    }
+
     return {
       login,
       isLoggedIn,
@@ -300,7 +363,13 @@ export default defineComponent({
       sendMessageTo,
 
       getAvatarChars,
-      getAvatarColor
+      getAvatarColor,
+
+
+      search,
+      normalizedSearchString,
+      searchResults,
+      addConversation
     }
   }
 })
@@ -514,5 +583,10 @@ html, body {
   background: rgba(0, 95, 177, 0.08);
   font-weight: bold;
   cursor: pointer;
+}
+
+.no-results {
+  padding: 16px;
+  opacity: 0.7;
 }
 </style>
