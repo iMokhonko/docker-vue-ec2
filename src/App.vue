@@ -93,7 +93,7 @@
   <div v-else class="login-page">
     <h2>Enter your login</h2>
     <input v-model="login">
-    <span class="caption">Min 3 chars: [a-z0-9_.]</span>
+    <span class="caption">Min 3 chars max 32 chars: [a-z0-9_.]</span>
     <button @click="logIn">Log in</button>
   </div>
 </template>
@@ -259,6 +259,11 @@ export default defineComponent({
 
       if(normalizedLogin.length < 3) {
         alert('Login should be at least 3 characters');
+        return;
+      }
+
+      if(normalizedLogin.length > 32) {
+        alert('Login should be not more than 32 characters');
         return;
       }
 
